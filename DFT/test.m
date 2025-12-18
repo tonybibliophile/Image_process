@@ -47,7 +47,7 @@ D = sqrt(U.^2 + V.^2);
 D = fftshift(D); % 移到中心
 
 % 設定截止頻率 (Cutoff Frequency)
-D0 = 30; % 設在 50，讓理想濾波器的振鈴稍微明顯一點
+D0 = 80; % 設在 50，讓理想濾波器的振鈴稍微明顯一點
 
 % --- 理想濾波器 (Ideal LPF - 講義款) ---
 H_Ideal = double(D <= D0);

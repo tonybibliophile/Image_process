@@ -4,152 +4,113 @@ addpath(genpath(pwd))
 
 %% Load image and add noise
 % load clean image
-% 確保你的資料夾內有 lena.jpg
-img = imread('Zebra.jpg'); 
-
-% 如果是彩圖，某些步驟可能需要處理單通道，但這裡保持原樣
+try
+    img = imread('Zebra.jpg'); % 嘗試讀取 Zebra
+catch
+    img = imread('peppers.png'); % 備用圖
+end
+% 轉為 double 以便進行數學運算
 img = im2double(img);
 
-% filter size
-sigma = 0.05;
-r=20
-% add noise
-% 注意：你必須確保目錄下有 add_noise.m 檔案
-noisy = add_g_noise(img,sigma); 
+% parameter for Gaussian Filter (Cutoff Frequency)
+D0 = 40; % 截止頻率，相當於以前的 r，控制模糊程度
+
+% add Gaussian noise
+% 直接使用 randn 加上常態分佈雜訊
+sigma = 0.05; % 雜訊強度
+noise = sigma * randn(size(img));
+noisy = img + noise;
+% 確保數值範圍在 0~1
+noisy = max(0, min(noisy, 1));
 
 figure();
 subplot(1,2,1),imshow(img);title('original image')
-subplot(1,2,2),imshow(noisy);title('noisy image')
+subplot(1,2,2),imshow(noisy);title('noisy image (Gaussian)')
 
 %% Perform FT on the original image
 % implement FT below
 img_fq = FT(img);
-
 % center shift (You can read Section: Periodicity and Center shifting)
 img_fq = fftshift(img_fq); 
-
 % for displaying the power part by log scale
 log_img_fq = log(1+abs(img_fq)); 
-
 % normalize the power to 0-1
 log_img_fq = mat2gray(log_img_fq); 
-
 figure();
 subplot(2,2,1),imshow(log_img_fq);title('log FT original image')
 
 %% Perform FT on the noisy image
 % implement FT below
 noisy_fq = FT(noisy);
-noisy_fq = fftshift(noisy_fq);
+noisy_fq = fftshift(noisy_fq); % 注意：這裡做了 shift，直流分量移到了中心
 log_noisy_fq = log(1+abs(noisy_fq));
 log_noisy_fq = mat2gray(log_noisy_fq);
 subplot(2,2,2),imshow(log_noisy_fq);title('log FT noisy image')
 
-%{
-%% Create a filter
-% Try different filters for extra credit
+%% Create a Gaussian Filter
 % get the size of the input image
-[m, n, z] = size(img); 
+[M, N, C] = size(img); 
 
-% create a rectangular filter at center
-% 注意：如果是 RGB 彩圖 (z=3)，濾波器需要複製到三層，或者在運算時廣播
-filter = zeros(m,n);
-filter(r:m-r,r:n-r) = 1;
-
-% 顯示濾波器 (如果是多通道，只顯示第一層以免報錯)
-subplot(2,2,3),imshow(filter,[]);title('filter')
-%}
-
-%% Create a filter (Gaussian Low Pass Filter)
-% get the size of the input image
-[m, n, z] = size(img); 
-
-% 1. 設定截止頻率 (Cutoff Frequency)
-% 取代原本的 r。
-% D0 控制濾波器的模糊程度：
-% - D0 越小 (例如 10): 越模糊，去噪越強
-% - D0 越大 (例如 50): 越清晰，但雜訊殘留越多
-D0 = 60; 
-
-% 2. 建立頻率座標網格 (Frequency Coordinate Grid)
-% 我們需要計算每個頻率點到中心 (0,0) 的距離 D
-u = 0:(m-1);
-v = 0:(n-1);
-
-% 將座標中心化 (讓 0 點移到中間，因為我們稍後會用 fftshift)
-idx_u = find(u > m/2); u(idx_u) = u(idx_u) - m;
-idx_v = find(v > n/2); v(idx_v) = v(idx_v) - n;
-
+% create coordinate grid (centered)
+u = -floor(M/2) : floor((M-1)/2);
+v = -floor(N/2) : floor((N-1)/2);
 [V, U] = meshgrid(v, u);
 
-% 3. 計算距離矩陣 D
-D = sqrt(U.^2 + V.^2);
+% Calculate distance from center (D^2 = u^2 + v^2)
+D_sq = U.^2 + V.^2;
 
-% 因為你的 img_fq 和 noisy_fq 都有做 fftshift，所以這裡的距離矩陣也要 shift
-D = fftshift(D);
+% Gaussian Low Pass Filter Formula: H = exp(-D^2 / (2*D0^2))
+filter = exp(-D_sq / (2 * D0^2));
 
-% 4. 建立高斯濾波器
-% 公式：H = exp( -D^2 / (2 * D0^2) )
-filter = exp(-(D.^2) / (2 * (D0^2)));
-
-% 顯示濾波器形狀
-subplot(2,2,3), imshow(filter, []); title(['Gaussian Filter (D0=' num2str(D0) ')']);
-
-% [重要] 如果你的圖片是彩色的 (z=3)，濾波器需要擴展成 3 層
-% 雖然新版 Matlab 支援自動廣播 (Broadcasting)，但為了保險起見：
-if z == 3
-    % 這裡其實不需要真的 repmat，因為下面的 noisy_fq .* filter 會自動處理
-    % 但如果你用舊版 Matlab，可能需要寫: filter = repmat(filter, [1, 1, 3]);
-end
+% 顯示濾波器 (顯示 2D 遮罩即可)
+subplot(2,2,3),imshow(filter,[]);title(['Gaussian Filter (D0=' num2str(D0) ')'])
 
 %% Filter out the noise
-% 如果 noisy_fq 是 3D 而 filter 是 2D，Matlab 新版會自動廣播，舊版需注意
+% 進行頻域濾波
+% Matlab 會自動將 2D 的 filter 廣播乘到 3D 的 noisy_fq (RGB) 上
 fil_img = noisy_fq .* filter; 
 
 log_fil_img = log(1+abs(fil_img));
 log_fil_img = mat2gray(log_fil_img);
-subplot(2,2,4),imshow(log_fil_img);title('FT image after filter')
+subplot(2,2,4),imshow(log_fil_img);title('FT image after Gaussian filter')
 
 %% Inverse Fourier transform
-% unshift
+% unshift (把中心點移回角落，準備做反轉換)
 fil_img = ifftshift(fil_img); 
 
 % implement IFT below
 result = IFT(fil_img); 
-result = mat2gray(real(result));
+
+% 取實部並正規化
+result = real(result);
+result = max(0, min(result, 1)); % Clip to 0-1
 
 figure();
 subplot(1,2,1),imshow(noisy);title('noisy image')
-subplot(1,2,2);imshow(result,[]);title('denoised image')
+subplot(1,2,2);imshow(result,[]);title('denoised image (Gaussian)')
 
 %% Implement your FT/IFT function here
 function [I_freq] = FT(I)
-    % 獲取影像尺寸：高度 M，寬度 N，通道數 C (若是 RGB 則 C=3)
+    % 獲取影像尺寸：高度 M，寬度 N，通道數 C
     [M, N, C] = size(I);
     I_freq = zeros(M, N, C);
     
-    % --- 準備 DFT 矩陣 (避免多層迴圈，使用矩陣乘法加速) ---
-    % 1. 針對「高度 M」的 DFT 矩陣 (用於處理 Column)
+    % --- 準備 DFT 矩陣 ---
+    % 1. 針對「高度 M」的 DFT 矩陣
     m_idx = 0:M-1;
     k_m = m_idx';
-    % W_M 是一個 M x M 的矩陣
     W_M = exp(-1j * 2 * pi * k_m * m_idx / M);
     
-    % 2. 針對「寬度 N」的 DFT 矩陣 (用於處理 Row)
+    % 2. 針對「寬度 N」的 DFT 矩陣
     n_idx = 0:N-1;
     k_n = n_idx';
-    % W_N 是一個 N x N 的矩陣
     W_N = exp(-1j * 2 * pi * k_n * n_idx / N);
     
     % --- 開始轉換 ---
-    % 針對每個顏色通道獨立處理
     for c = 1:C
-        channel_data = double(I(:,:,c));
-        
         % 數學原理：F = W_M * Image * W_N.'
-        % 第一步：W_M * channel_data (對每一行做 DFT)
-        % 第二步：結果 * W_N.' (對每一列做 DFT)
-        I_freq(:,:,c) = W_M * channel_data * W_N.';
+        % 這裡保留你原本使用的轉置寫法 W_N.' (雖然 DFT 矩陣是對稱的，結果不變)
+        I_freq(:,:,c) = W_M * double(I(:,:,c)) * W_N.';
     end
 end
 
@@ -158,14 +119,12 @@ function [I] = IFT(I_freq)
     I = zeros(M, N, C);
     
     % --- 準備 IDFT 矩陣 ---
-    % IDFT 的指數是正的 (exp(j...))
-    
-    % 1. 高度 M 的 IDFT 矩陣
+    % 1. 高度 M 的 IDFT 矩陣 (指數為正)
     m_idx = 0:M-1;
     k_m = m_idx';
     W_M_inv = exp(1j * 2 * pi * k_m * m_idx / M);
     
-    % 2. 寬度 N 的 IDFT 矩陣
+    % 2. 寬度 N 的 IDFT 矩陣 (指數為正)
     n_idx = 0:N-1;
     k_n = n_idx';
     W_N_inv = exp(1j * 2 * pi * k_n * n_idx / N);
@@ -177,7 +136,7 @@ function [I] = IFT(I_freq)
         % 數學原理：Image = (W_M_inv * F * W_N_inv.') / (M*N)
         temp = W_M_inv * channel_freq * W_N_inv.';
         
-        % IDFT 記得要除以總像素數 (Normalization)
+        % IDFT 記得要除以總像素數
         I(:,:,c) = temp / (M * N);
     end
 end
